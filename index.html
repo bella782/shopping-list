@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopping List</title>
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--text:#1f2a24;--muted:#7a847d;--accent:#2f7d5b;--line:#e4e0d6}
+@media (prefers-color-scheme:dark){:root{--bg:#151a17;--card:#1f2622;--text:#e9eee9;--muted:#8a948d;--accent:#4fb383;--line:#2c3530}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,sans-serif}
+main{max-width:620px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0}
+.sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+.shop{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:14px}
+.head{display:flex;justify-content:space-between;align-items:center}
+h2{font-size:17px;margin:0}
+.count{color:var(--muted);font-size:13px}
+.add{display:flex;gap:8px;margin:10px 0}
+input[type=text]{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font:inherit}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:none;color:var(--muted);padding:6px 8px;font-size:13px}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+li input{width:20px;height:20px;accent-color:var(--accent)}
+li .t{flex:1;word-break:break-word}
+li.done .t{text-decoration:line-through;color:var(--muted)}
+.by{font-size:11px;color:var(--muted);background:var(--bg);border-radius:20px;padding:2px 8px}
+.empty,.msg{color:var(--muted);font-size:14px}
+.who{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>🛒 Shopping List</h1>
+  <div class="sub" id="sub">Loading…</div>
+  <div class="who">Who are you? <input type="text" id="me" maxlength="20" placeholder="Your name"></div>
+  <div id="app"></div>
+  <div class="add"><input type="text" id="newshop" placeholder="Add another shop…" maxlength="40"><button id="addshop">Add shop</button></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// 1) Paste your Supabase values here (Project Settings > API)
+const SUPABASE_URL = "https://spzzuwszkdxurogypukm.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNwenp1d3N6a2R4dXJvZ3lwdWttIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4NzI3ODQsImV4cCI6MjEwNzQ0ODc4NH0.VdqVwzPqgi_ecP4kGJMaB-Da677exzOEdCjaev0txAA";
+
+const sub = document.getElementById('sub'), app = document.getElementById('app'), meInput = document.getElementById('me');
+const el = (t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;};
+let shops=[], items=[], drafts={};
+meInput.value = localStorage.getItem('shopper') || '';
+meInput.oninput = ()=>localStorage.setItem('shopper', meInput.value.trim());
+
+if (SUPABASE_URL.startsWith('PASTE')) { sub.textContent = 'Add your Supabase URL and key at the top of the script in index.html.'; throw new Error('not configured'); }
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function load() {
+  const [s, i] = await Promise.all([
+    sb.from('shops').select('*').order('position'),
+    sb.from('items').select('*').order('created_at')
+  ]);
+  if (s.error || i.error) { sub.textContent = 'Could not load: ' + (s.error || i.error).message; return; }
+  shops = s.data; items = i.data; sub.textContent = 'Shared live between everyone with this link.'; render();
+}
+
+function render() {
+  const focus = document.activeElement && document.activeElement.dataset.shop;
+  app.textContent = '';
+  if (!shops.length) app.appendChild(el('div','msg','No shops yet — add one below.'));
+  shops.forEach(s => {
+    const list = items.filter(x=>x.shop_id===s.id).sort((a,b)=>(a.done-b.done)||(a.created_at<b.created_at?-1:1));
+    const card = el('section','shop'), head = el('div','head');
+    head.appendChild(el('h2',null,s.name));
+    const right = el('div'); right.appendChild(el('span','count',list.filter(x=>!x.done).length+' to buy'));
+    if (list.some(x=>x.done)) { const c = el('button','ghost','Clear ticked'); c.onclick = ()=>sb.from('items').delete().eq('shop_id',s.id).eq('done',true).then(load); right.appendChild(c); }
+    head.appendChild(right); card.appendChild(head);
+    const add = el('div','add'), inp = el('input'); inp.type='text'; inp.placeholder='Add item…'; inp.maxLength=80; inp.dataset.shop=s.id; inp.value=drafts[s.id]||'';
+    inp.oninput = ()=>drafts[s.id]=inp.value;
+    const go = el('button',null,'Add');
+    const submit = async ()=>{ const v=inp.value.trim(); if(!v) return; drafts[s.id]=''; inp.value=''; await sb.from('items').insert({shop_id:s.id,text:v,added_by:meInput.value.trim()||null}); load(); };
+    inp.onkeydown = e=>{ if(e.key==='Enter') submit(); }; go.onclick = submit;
+    add.append(inp,go); card.appendChild(add);
+    if (!list.length) card.appendChild(el('div','empty','Nothing needed here.'));
+    const ul = el('ul');
+    list.forEach(x => {
+      const li = el('li', x.done?'done':''), cb = el('input'); cb.type='checkbox'; cb.checked=x.done;
+      cb.onchange = ()=>sb.from('items').update({done:cb.checked}).eq('id',x.id).then(load);
+      li.append(cb, el('span','t',x.text)); if (x.added_by) li.appendChild(el('span','by',x.added_by));
+      const d = el('button','ghost','✕'); d.onclick = ()=>sb.from('items').delete().eq('id',x.id).then(load); li.appendChild(d);
+      ul.appendChild(li);
+    });
+    card.appendChild(ul); app.appendChild(card);
+  });
+  if (focus) { const f = app.querySelector('input[data-shop="'+focus+'"]'); if (f) { f.focus(); f.setSelectionRange(f.value.length,f.value.length); } }
+}
+
+document.getElementById('addshop').onclick = async ()=>{
+  const i = document.getElementById('newshop'), v = i.value.trim(); if(!v) return; i.value='';
+  await sb.from('shops').insert({name:v, position: shops.length}); load();
+};
+
+sb.channel('shopping').on('postgres_changes',{event:'*',schema:'public'},load).subscribe();
+load();
+</script>
+</body>
+</html>
